@@ -1,0 +1,245 @@
+---
+title: "code_prscx_score for multi-ancestry VTE PRS"
+author: "Yon Ho Jee"
+date: '2022 6 10 '
+---
+#Steps
+#(1)Preparation of the weight file to grab the RSID that identical to the bim file in the genotype file  
+#(2)compute PRS using plink 
+#(3)sum the PRS score from different chromosome
+#(4)Evaluate model PRS
+#   Find "meta-weights" for combined PRS (**only applicable to Michigan biobank**)
+
+# (1)Preparation of the weight file to grab the RSID that identical to the bim file in the genotype file 
+please save weight files to /path/output/
+
+# (2)compute PRS using plink 
+
+**EUR**
+```{bash, eval = FALSE}
+module load plink/1.90-fasrc01
+
+for chr in {1..22};do
+plink --bfile /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095_rsid --score /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/output/weight_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/score/score_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
+done
+```
+
+**AFR**
+```{bash, eval = FALSE}
+module load plink/1.90-fasrc01
+
+for chr in {1..22};do
+plink --bfile /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095_rsid --score /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/output/weight_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/score/score_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
+done
+```
+
+#(3)Sum the PRS score from different chromosome
+```{r}
+for(weight in c("AFR","EUR")){
+phi = "phiauto"
+
+a = 1 # starting chromosome number
+b = 22 #ending chromosome number
+
+output.file.name =paste("/path/score/", "finalscore_", weight, "_pst_eff_a1_b0.5_", phi, "_chr", a,"-chr", b, ".csv", sep ="")
+
+chr = a
+score.file.name = paste("/path/score/", "score_", weight, "_pst_eff_a1_b0.5_", phi, "_chr", chr,".txt.profile", sep ="")
+score = read.table(score.file.name, header = T)
+final.score = score[, c(1:2)]
+final.score$PRS = 0
+
+final.score$PRS = final.score$PRS + score$SCORESUM
+
+for (chr in c((a+1):b)){
+  
+  score.file.name = paste("/path/score/", "score_", weight, "_pst_eff_a1_b0.5_", phi, "_chr", chr,".txt.profile", sep ="")
+  score = read.table(score.file.name, header = T)
+  final.score$PRS = final.score$PRS + score$SCORESUM
+  print(chr)
+}
+
+head(final.score)
+
+write.csv(final.score, file = output.file.name)
+
+}
+
+```
+
+```{r}
+finalscore_AFR<-read.csv("/path/score/finalscore_AFR_pst_eff_a1_b0.5_phiauto_chr1-chr22.csv")
+finalscore_EUR<-read.csv("/path/score/finalscore_EUR_pst_eff_a1_b0.5_phiauto_chr1-chr22.csv")
+finalscore <- inner_join(finalscore_AFR, finalscore_EUR, by = c("FID","IID"))
+names(finalscore)[4]<-"PRSCSX_AFR";names(finalscore)[6]<-"PRSCSX_EUR"
+  
+hist(finalscore_AFR$PRS);hist(finalscore_EUR$PRS)
+
+```
+
+# (4)Evaluate model PRS
+
+#load phenotype data ("IID","sex", "PC1-10", "caco" as outcome)
+```{r}
+y2<-"pheno"
+#make sure that phenotype data are in the same order as bed file
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(qqman)
+library(pROC)
+library(tidyverse)
+```
+
+# Standardize to controls
+```{r}
+y3 <- inner_join(y2, finalscore, by = c("IID")) #4423
+
+y3$PRSCSX_AFR_std<-(y3$PRSCSX_AFR-mean(y3$PRSCSX_AFR[y3$caco==0]))/sd(y3$PRSCSX_AFR[y3$caco==0])
+y3$PRSCSX_EUR_std<-(y3$PRSCSX_EUR-mean(y3$PRSCSX_EUR[y3$caco==0]))/sd(y3$PRSCSX_EUR[y3$caco==0])
+  
+hist(y3$PRSCSX_AFR_std);hist(y3$PRSCSX_EUR_std)
+
+```
+
+### Find "meta-weights" for combined PRS  - **only applicable to Michigan biobank**
+```{r}
+weight_reg.formula <- paste("") %>%
+    paste0("caco ~ PRSCSX_AFR_std + PRSCSX_EUR_std", .) %>%
+    as.formula
+
+train.dat<-y3
+
+prscsx_weight.model <- glm(weight_reg.formula, data = train.dat, family = "binomial") %>% 
+  summary
+prscsx_weight.model
+mylogit <- glm(weight_reg.formula, data = train.dat, family = "binomial") 
+
+coef(mylogit)
+
+# (Intercept) PRSCSX_AFR_std PRSCSX_EUR_std 
+#    <b0>         <b1>        <b3> 
+# please provide b0, b1, b3 and plug these betas for LPRS_combined_AFR calculation below
+```
+
+PRSCSX_combined_EUR
+```{r}
+y3$PRSCSX_combined_EUR <- 0.06614*y3$PRSCSX_AFR_std  + 0.34631*y3$PRSCSX_EUR_std -0.07715 
+y3$PRSCSX_combined_EUR_std<-(y3$PRSCSX_combined_EUR-mean(y3$PRSCSX_combined_EUR[y3$caco==0]))/sd(y3$PRSCSX_combined_EUR[y3$caco==0])
+
+prscx_combined_eur.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ PRSCSX_combined_EUR_std+sex+", .) %>%
+    as.formula
+
+test.dat<-y3
+
+mylogit_combined_eur <- glm(prscx_combined_eur.formula, data = test.dat, family = "binomial") 
+```
+
+PRSCSX_combined_AFR
+```{r}
+y3$PRSCSX_combined_AFR <- 0.1193056*y3$PRSCSX_AFR_std  + 0.1776201*y3$PRSCSX_EUR_std -2.7424880
+y3$PRSCSX_combined_AFR_std<-(y3$PRSCSX_combined_AFR-mean(y3$PRSCSX_combined_AFR[y3$caco==0]))/sd(y3$PRSCSX_combined_AFR[y3$caco==0])
+
+prscx_combined_afr.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ PRSCSX_combined_AFR_std+sex+", .) %>%
+    as.formula
+
+test.dat<-y3
+
+mylogit_combined_afr <- glm(prscx_combined_afr.formula, data = test.dat, family = "binomial") 
+
+```
+
+PRSCSX_EUR
+```{r}
+prscx_eur_reg.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ PRSCSX_EUR_std + sex +", .) %>%
+    as.formula
+
+mylogit_eur <- glm(prscx_eur_reg.formula, data = test.dat, family = "binomial") 
+```
+
+PRSCSX_AFR
+```{r}
+prscx_afr_reg.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ PRSCSX_AFR_std + sex +", .) %>%
+    as.formula
+mylogit_afr <- glm(prscx_afr_reg.formula, data = test.dat, family = "binomial") 
+```
+
+### Make ROC curves, compute AUC
+
+```{r}
+or1<-exp(cbind(OR = coef(mylogit_eur), confint(mylogit_eur)))[2,]
+or2-exp(cbind(OR = coef(mylogit_afr), confint(mylogit_afr)))[2,]
+or3<-exp(cbind(OR = coef(mylogit_combined_eur), confint(mylogit_combined_eur)))[2,]
+or4<-exp(cbind(OR = coef(mylogit_combined_afr), confint(mylogit_combined_afr)))[2,]
+```
+
+```{r}
+or_std_cx <-  as.data.frame(matrix(rep(NA,16),ncol = 4, nrow = 4))
+colnames(or_std_cx) <- c("Method","OR","OR_Low","OR_High")
+or_std_cx[1,1] <- "Stdandarized PRSCSx-EUR"
+or_std_cx[2,1] <- "Stdandarized PRSCSx-AFR"
+or_std_cx[3,1] <- "Stdandarized PRSCSx-combined_EUR"
+or_std_cx[4,1] <- "Stdandarized PRSCSx-combined_AFR"
+
+or_std_cx$OR[1] <- or1[1]
+or_std_cx$OR_Low[1] <- or1[2]
+or_std_cx$OR_High[1] <- or1[3]
+
+or_std_cx$OR[2] <- or2[1]
+or_std_cx$OR_Low[2] <- or2[2]
+or_std_cx$OR_High[2] <- or2[3]
+
+or_std_cx$OR[3] <- or3[1]
+or_std_cx$OR_Low[3] <- or3[2]
+or_std_cx$OR_High[3] <- or3[3]
+
+or_std_cx$OR[4] <- or4[1]
+or_std_cx$OR_Low[4] <- or4[2]
+or_std_cx$OR_High[4] <- or4[3]
+
+kable(or_std_cx[1:4,])
+kbl(or_std_cx[1:4,] , caption = "PRSCSx") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+```{r}
+results <-  as.data.frame(matrix(rep(NA,16),ncol = 4, nrow = 4))
+colnames(results) <- c("Method","AUC","AUC_Low","AUC_High")
+results[1,1] <- "PRSCSx EUR"
+results[2,1] <- "PRSCSx AFR"
+results[3,1] <- "PRSCSx combined_EUR"
+results[4,1] <- "PRSCSx combined_AFR"
+
+test_roc_eur = roc(test.dat$caco ~ test.dat$PRSCSX_EUR_std)
+results$AUC[1] <- auc(test_roc_eur)
+results$AUC_Low[1] <- ci.auc(test_roc_eur)[1]
+results$AUC_High[1] <- ci.auc(test_roc_eur)[3]
+
+test_roc_afr = roc(test.dat$caco ~ test.dat$PRSCSX_AFR_std)
+results$AUC[2] <- auc(test_roc_afr)
+results$AUC_Low[2] <- ci.auc(test_roc_afr)[1]
+results$AUC_High[2] <- ci.auc(test_roc_afr)[3]
+
+test_roc_combined_EUR = roc(test.dat$caco ~ test.dat$PRSCSX_combined_EUR_std)
+results$AUC[3] <- auc(test_roc_combined_EUR)
+results$AUC_Low[3] <- ci.auc(test_roc_combined_EUR)[1]
+results$AUC_High[3] <- ci.auc(test_roc_combined_EUR)[3]
+
+test_roc_combined_AFR = roc(test.dat$caco ~ test.dat$PRSCSX_combined_AFR_std)
+results$AUC[4] <- auc(test_roc_combined_AFR)
+results$AUC_Low[4] <- ci.auc(test_roc_combined_AFR)[1]
+results$AUC_High[4] <- ci.auc(test_roc_combined_AFR)[3]
+
+kable(results[1:4,])
+kbl(results[1:4,] , caption = "PRSCSx") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+

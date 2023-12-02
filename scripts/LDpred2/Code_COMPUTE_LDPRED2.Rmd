@@ -38,10 +38,10 @@ options(default.nproc.blas = NULL)
 ### Get VTE bed/bim/fam files as bigSNP object
 ```{r}
 NCORES <- parallelly::availableCores()
-tmpVTE <- tempfile(tmpdir = "/n/holyscratch01/kraft_lab/yjee/VTE/scratch")
+tmpVTE <- tempfile(tmpdir = "scratch")
 on.exit(file.remove(paste0(tmpVTE, ".sbk")), add = TRUE)
 
-path2 <- snp_readBed2("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095.bed", backingfile = tmpVTE)
+path2 <- snp_readBed2("VTEhumancore_imputed_Rsq095.bed", backingfile = tmpVTE)
 
 obj.bigSNPVTE <- snp_attach(path2)
 
@@ -62,8 +62,8 @@ ncores = NCORES
 
 # load SNP list
 ```{r}
-info_snp_new_EUR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/info_snp_EUR")
-info_snp_new_AFR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/info_snp_AFR")
+info_snp_new_EUR<-readRDS("info_snp_EUR")
+info_snp_new_AFR<-readRDS("info_snp_AFR")
 ```
 
 ```{r}
@@ -81,8 +81,8 @@ df_beta_AFR <- info_snpVTE_AFR[, c("pos","_NUM_ID_")]
 
 # load beta_auto
 ```{r}
-beta_auto_EUR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/beta_auto_EUR.Jun_10_2022") #604741     48
-beta_auto_AFR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/beta_auto_AFR.Apr_03_2022") #1184805      48
+beta_auto_EUR<-readRDS("beta_auto_EUR.Jun_10_2022") #604741     48
+beta_auto_AFR<-readRDS("beta_auto_AFR.Apr_03_2022") #1184805      48
 ```
 
 # (2)Apply PRS to VTE individual-level data

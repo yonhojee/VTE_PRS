@@ -1,0 +1,284 @@
+---
+title: "Code LDpred2_auto for multi-ancestry VTE PRS"
+author: "Yon Ho Jee"
+date: '2022 6 10 '
+---
+
+#Steps
+#(1)load bed file & SNP list & beta_auto
+#(2)Apply PRS to VTE individual-level data
+#(3)Evaluate model PRS
+#   Find "meta-weights" for combined PRS (**only applicable to Michigan biobank**)
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(qqman)
+library(pROC)
+library(bigstatsr)
+library(parallel)
+library(kableExtra)
+library(snpStats)
+library(caret)
+library(gridExtra)
+library(MetaSubtract)
+library(tidyverse)
+library(R.utils)
+```
+
+```{r}
+library(bigsnpr)
+options(bigstatsr.check.parallel.blas = FALSE)
+options(default.nproc.blas = NULL)
+```
+
+# (1)load bed file & SNP list & beta_auto
+
+### Get VTE bed/bim/fam files as bigSNP object
+```{r}
+NCORES <- parallelly::availableCores()
+tmpVTE <- tempfile(tmpdir = "/n/holyscratch01/kraft_lab/yjee/VTE/scratch")
+on.exit(file.remove(paste0(tmpVTE, ".sbk")), add = TRUE)
+
+path2 <- snp_readBed2("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095.bed", backingfile = tmpVTE)
+
+obj.bigSNPVTE <- snp_attach(path2)
+
+str(obj.bigSNPVTE)
+
+dim(obj.bigSNPVTE$genotypes)
+
+```
+
+### Imputation
+```{r}
+genotypeVTE <- snp_fastImputeSimple(
+obj.bigSNPVTE$genotypes,
+method = "mode",
+ncores = NCORES
+)
+```
+
+# load SNP list
+```{r}
+info_snp_new_EUR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/info_snp_EUR")
+info_snp_new_AFR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/info_snp_AFR")
+```
+
+```{r}
+# extract the SNP information from the genotype
+mapVTE <- obj.bigSNPVTE$map[-3]
+names(mapVTE) <- c("chr", "rsid", "pos", "a1", "a0")
+
+# perform SNP matching
+info_snpVTE_EUR <- snp_match(info_snp_new_EUR, mapVTE)
+df_beta_EUR <- info_snpVTE_EUR[, c("pos","_NUM_ID_")]
+
+info_snpVTE_AFR <- snp_match(info_snp_new_AFR, mapVTE)
+df_beta_AFR <- info_snpVTE_AFR[, c("pos","_NUM_ID_")]
+```
+
+# load beta_auto
+```{r}
+beta_auto_EUR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/beta_auto_EUR.Jun_10_2022") #604741     48
+beta_auto_AFR<-readRDS("/n/holyscratch01/kraft_lab/yjee/VTE/Processed_Data/beta_auto_AFR.Apr_03_2022") #1184805      48
+```
+
+# (2)Apply PRS to VTE individual-level data
+
+LDpred2_EUR
+```{r}
+# calculate PRS for all samples
+ind.test <- 1:nrow(genotypeVTE) 
+pred_auto <- 
+    big_prodMat(genotypeVTE,
+                beta_auto_EUR,
+                ind.row = ind.test, 
+                ind.col = df_beta_EUR$`_NUM_ID_`) 
+# scale the PRS generated from AUTO
+pred_scaled <- apply(pred_auto, 2, sd) 
+final_beta_auto_EUR <- #sum across multiple models (columns) 
+    rowMeans(beta_auto_EUR[,
+                abs(pred_scaled -
+                    median(pred_scaled)) <
+                    3 * mad(pred_scaled)])
+pred_auto <-
+    big_prodVec(genotypeVTE,
+        final_beta_auto_EUR,
+        ind.row = ind.test,
+        ind.col = df_beta_EUR$`_NUM_ID_`)
+
+sum(final_beta_auto_EUR !=0) #604741
+```
+
+LDpred2_AFR
+```{r}
+# calculate PRS for all samples
+ind.test <- 1:nrow(genotypeVTE) #4423
+pred_auto_AFR <- #4423 4
+    big_prodMat(genotypeVTE,
+                beta_auto_AFR[df_beta_AFR$`_NUM_ID_`,],
+                ind.row = ind.test, #4423
+                ind.col = df_beta_AFR$`_NUM_ID_`) #191172
+# scale the PRS generated from AUTO
+pred_scaled_AFR <- apply(pred_auto_AFR, 2, sd) #4
+final_beta_auto_AFR <- #sum across multiple models (columns) -> #191172
+    rowMeans(beta_auto_AFR[,
+                abs(pred_scaled_AFR -
+                    median(pred_scaled_AFR)) <
+                    3 * mad(pred_scaled_AFR)])
+pred_auto_AFR <-
+    big_prodVec(genotypeVTE,
+        final_beta_auto_AFR[df_beta_AFR$`_NUM_ID_`],
+        ind.row = ind.test,
+        ind.col = df_beta_AFR$`_NUM_ID_`)
+
+sum(final_beta_auto_AFR !=0) #1184805
+```
+
+# (3)Evaluate model PRS
+
+#load phenotype data ("sex", "PC1-10", "caco" as outcome)
+```{r}
+y2<-"pheno"
+#make sure that phenotype data are in the same order as bed file
+```
+
+#Standardize PRS
+```{r}
+reg.dat <- y2
+reg.dat$LPRS_EUR <- pred_auto 
+reg.dat$LPRS_AFR <- pred_auto_AFR 
+
+reg.dat$LPRS_EUR_std <- (reg.dat$LPRS_EUR-mean(reg.dat$LPRS_EUR[reg.dat$caco==0]))/sd(reg.dat$LPRS_EUR[reg.dat$caco==0])
+reg.dat$LPRS_AFR_std <- (reg.dat$LPRS_AFR-mean(reg.dat$LPRS_AFR[reg.dat$caco==0]))/sd(reg.dat$LPRS_AFR[reg.dat$caco==0])
+
+reg_EUR_std.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ LPRS_EUR_std+sex+", .) %>%
+    as.formula
+reg_AFR_std.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ LPRS_AFR_std+sex+", .) %>%
+    as.formula
+```
+
+### Find "meta-weights" for combined PRS  - **only applicable to Michigan biobank**
+```{r}
+weight_reg.formula <- paste("") %>%
+    paste0("caco ~ LPRS_AFR_std + LPRS_EUR_std", .) %>%
+    as.formula
+
+train.dat<-reg.dat
+
+ldpred2_weight.model <- glm(weight_reg.formula, data = train.dat, family = "binomial") %>% 
+  summary
+ldpred2_weight.model
+mylogit <- glm(weight_reg.formula, data = train.dat, family = "binomial") 
+
+coef(mylogit)
+
+# (Intercept) LPRS_AFR_std LPRS_EUR_std 
+#    <b0>         <b1>        <b3> 
+# please provide b0, b1, b3 and plug these betas for LPRS_combined_AFR calculation below
+```
+
+LDpred2_combined_EUR
+```{r}
+reg.dat$LPRS_combined_EUR <- 0.02819114*reg.dat$LPRS_AFR_std + 0.38007277*reg.dat$LPRS_EUR_std -0.07654566
+
+reg.dat$LPRS_combined_EUR_std<-(reg.dat$LPRS_combined_EUR-mean(reg.dat$LPRS_combined_EUR[reg.dat$caco==0]))/sd(reg.dat$LPRS_combined_EUR[reg.dat$caco==0])
+
+ldpred2_combined_EUR_reg.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ LPRS_combined_EUR_std+sex+", .) %>%
+    as.formula
+```
+
+LDpred2_combined_AFR
+```{r}
+reg.dat$LPRS_combined_AFR <- 0.09164556*reg.dat$LPRS_AFR_std + 0.21466434*reg.dat$LPRS_EUR_std -2.74059333
+
+reg.dat$LPRS_combined_AFR_std<-(reg.dat$LPRS_combined_AFR-mean(reg.dat$LPRS_combined_AFR[reg.dat$caco==0]))/sd(reg.dat$LPRS_combined_AFR[reg.dat$caco==0])
+
+ldpred2_combined_AFR_reg.formula <- paste("PC", 1:10, sep = "", collapse = "+") %>%
+    paste0("caco ~ LPRS_combined_AFR_std+sex+", .) %>%
+    as.formula
+```
+
+### Make ROC curves, compute AUC
+
+```{r}
+model1 <- glm(reg_EUR_std.formula, data = reg.dat, family = "binomial") 
+model2 <- glm(reg_AFR_std.formula, data = reg.dat, family = "binomial") 
+model3 <- glm(ldpred2_combined_EUR_reg.formula, data = reg.dat, family = "binomial") 
+model4 <- glm(ldpred2_combined_AFR_reg.formula, data = reg.dat, family = "binomial") 
+
+or1<-exp(cbind(OR = coef(model1), confint(model1)))[2,]
+or2<-exp(cbind(OR = coef(model2), confint(model2)))[2,]
+or3<-exp(cbind(OR = coef(model3), confint(model3)))[2,]
+or4<-exp(cbind(OR = coef(model4), confint(model4)))[2,]
+```
+
+```{r}
+or_std_lp <-  as.data.frame(matrix(rep(NA,12),ncol = 4, nrow = 3))
+colnames(or_std_lp) <- c("Method","OR","OR_Low","OR_High")
+or_std_lp[1,1] <- "Stdandarized LDpred2-EUR"
+or_std_lp[2,1] <- "Stdandarized LDpred2-AFR"
+or_std_lp[3,1] <- "Stdandarized LDpred2-combined_EUR"
+or_std_lp[4,1] <- "Stdandarized LDpred2-combined_AFR"
+
+or_std_lp$OR[1] <- or1[1]
+or_std_lp$OR_Low[1] <- or1[2]
+or_std_lp$OR_High[1] <- or1[3]
+
+or_std_lp$OR[2] <- or2[1]
+or_std_lp$OR_Low[2] <- or2[2]
+or_std_lp$OR_High[2] <- or2[3]
+
+or_std_lp$OR[3] <- or3[1]
+or_std_lp$OR_Low[3] <- or3[2]
+or_std_lp$OR_High[3] <- or3[3]
+
+or_std_lp$OR[4] <- or4[1]
+or_std_lp$OR_Low[4] <- or4[2]
+or_std_lp$OR_High[4] <- or4[3]
+
+kable(or_std_lp[1:4,])
+kbl(or_std_lp[1:4,] , caption = "LDpred2") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+
+```{r}
+results <-  as.data.frame(matrix(rep(NA,16),ncol = 4, nrow = 4))
+colnames(results) <- c("Method","AUC","AUC_Low","AUC_High")
+results[1,1] <- "LDpred2 EUR"
+results[2,1] <- "LDpred2 AFR"
+results[3,1] <- "LDpred2 combined_EUR"
+results[4,1] <- "LDpred2 combined_AFR"
+
+test_roc_eur = roc(reg.dat$caco ~ reg.dat$LPRS_EUR_std)
+results$AUC[1] <- auc(test_roc_eur)
+results$AUC_Low[1] <- ci.auc(test_roc_eur)[1]
+results$AUC_High[1] <- ci.auc(test_roc_eur)[3]
+
+test_roc_afr = roc(reg.dat$caco ~ reg.dat$LPRS_AFR_std)
+results$AUC[2] <- auc(test_roc_afr)
+results$AUC_Low[2] <- ci.auc(test_roc_afr)[1]
+results$AUC_High[2] <- ci.auc(test_roc_afr)[3]
+
+test_roc_combined_EUR = roc(reg.dat$caco ~ reg.dat$LPRS_combined_EUR)
+results$AUC[3] <- auc(test_roc_combined_EUR)
+results$AUC_Low[3] <- ci.auc(test_roc_combined_EUR)[1]
+results$AUC_High[3] <- ci.auc(test_roc_combined_EUR)[3]
+
+test_roc_combined_AFR = roc(reg.dat$caco ~ reg.dat$LPRS_combined_AFR)
+results$AUC[4] <- auc(test_roc_combined_AFR)
+results$AUC_Low[4] <- ci.auc(test_roc_combined_AFR)[1]
+results$AUC_High[4] <- ci.auc(test_roc_combined_AFR)[3]
+
+kable(results[1:4,])
+kbl(results[1:4,] , caption = "LDpred2") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+```
+

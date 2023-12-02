@@ -20,7 +20,7 @@ please save weight files to /path/output/
 module load plink/1.90-fasrc01
 
 for chr in {1..22};do
-plink --bfile /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095_rsid --score /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/output/weight_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/score/score_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
+plink --bfile VTEhumancore_imputed_Rsq095_rsid --score output/weight_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out score/score_EUR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
 done
 ```
 
@@ -29,7 +29,7 @@ done
 module load plink/1.90-fasrc01
 
 for chr in {1..22};do
-plink --bfile /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/VTEhumancore_imputed_Rsq095_rsid --score /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/output/weight_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out /n/holylfs05/LABS/kraft_lab/Lab/yjee/VTE/Processed_Data/score/score_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
+plink --bfile VTEhumancore_imputed_Rsq095_rsid --score output/weight_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt 2 4 6 sum --out score/score_AFR_pst_eff_a1_b0.5_phiauto_chr"$chr".txt
 done
 ```
 

@@ -1,5 +1,5 @@
 # VTE_PRS
-Code for Jee YH et al., Multi-ancestry polygenic risk scores for venous thromboembolism. Human Molecular Genetics 2024. 
+Code for Jee YH et al., Multi-ancestry polygenic risk scores for venous thromboembolism. Human Molecular Genetics 2024. https://doi.org/10.1093/hmg/ddae097. 
 Data are publicly available at https://doi.org/10.7910/DVN/H3FR5U.
 
 The LDPRED2 folder contained the following files: 
